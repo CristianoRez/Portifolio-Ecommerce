@@ -15,9 +15,9 @@ class Order extends Model
         'status'
     ];
     public function user(){
-        return $this->hasone(User::class, "id", "user_id");
+        return $this->hasone(User::class, "id", "user_id")->with('adress');
     }
-    public function bag(){
-        return $this->hasOne(Bag::class, 'order_id', 'id')->with('product');
+    public function cart(){
+        return $this->hasMany(Cart::class, 'order_id', 'id')->with('product');
     }  
 }

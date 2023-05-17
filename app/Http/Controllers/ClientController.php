@@ -4,7 +4,9 @@ namespace App\Http\Controllers;
 
 use App\Mail\DemoMail;
 use App\Models\Adress;
-use App\Models\Bag;
+use App\Models\Cart;
+use App\Models\Chat;
+use App\Models\Direct_message;
 use App\Models\Product;
 use Illuminate\Http\Request;
 use App\Models\Order;
@@ -23,10 +25,15 @@ class ClientController extends Controller
         $data = $request->all();
         $data['user_id'] = Auth::user()->id;
 
-        Adress::create($data);
+        return Adress::create($data);
     }
 
-    public function BagAddProduct($id, Request $request)
+    public function ShowProducts()
+    {
+        return Product::get();
+    }
+
+    public function cartAddProduct($id, Request $request)
     {
         $query = [
             ['user_id', Auth::user()->id],
@@ -34,14 +41,15 @@ class ClientController extends Controller
             ['order_id', null]
         ];
 
-        $q = Bag::where($query)->first();
+        $q = Cart::where($query)->first();
 
         if ($q) {
-            return $q->update(
+            $q->update(
                 ["quantity" => $request["quantity"]]
             );
+            return cart::where('user_id', Auth::user()->id)->where('product_id', $id)->latest()->first();
         } else {
-            return Bag::create([
+            return cart::create([
                 "user_id" => Auth::user()->id,
                 "product_id" => $id,
                 "quantity" => $request["quantity"]
@@ -49,44 +57,43 @@ class ClientController extends Controller
         }
     }
 
-    public function ShowBag()
+    public function ShowCart()
     {
         $query = [
             ['user_id', Auth::user()->id],
             ['order_id', null]
         ];
-        $userBag = Bag::with("product")->where($query)->get();
+        $usercart = Cart::with("product")->where($query)->get();
 
-        if ($userBag->isEmpty()) {
+        if ($usercart->isEmpty()) {
             return "Erro: Não há itens no carrinho!";
         } else {
             $totalProductPrice = 0;
-            foreach ($userBag as $bagItem) {
-                $totalProductPrice += $bagItem->product->price * $bagItem->quantity;
+            foreach ($usercart as $cartItem) {
+                $totalProductPrice += $cartItem->product->price * $cartItem->quantity;
             }
             $totalProductPromotionPrice = 0;
-            foreach ($userBag as $bagItem) {
-                $totalProductPromotionPrice += $bagItem->product->promotion_price * $bagItem->quantity;
+            foreach ($usercart as $cartItem) {
+                $totalProductPromotionPrice += $cartItem->product->promotion_price * $cartItem->quantity;
             }
-            $bag = Bag::with('product')->where($query)->first();
+            $cart = cart::with('product')->where($query)->get();
             $return = [
-                'name' => $bag->product->name,
-                'description' => $bag->product->description,
-                'Preço' => $totalProductPrice,
-                'Preço promocional' => $totalProductPromotionPrice
+                'Cart: ' => $cart,
+                'Preço total: ' => $totalProductPrice,
+                'Preço promocional: ' => $totalProductPromotionPrice
             ];
             return $return;
         }
     }
 
-    public function ClearBag()
+    public function Clearcart()
     {
-        return Bag::where('user_id', Auth::user()->id)->delete();
+        return Cart::where('user_id', Auth::user()->id)->delete();
     }
 
     public function ChangeQuantity(Request $request)
     {
-        $query = Bag::where('user_id', Auth::user()->id)->where('product_id', $request['product_id'])->where('order_id', null)->first();
+        $query = Cart::where('user_id', Auth::user()->id)->where('product_id', $request['product_id'])->where('order_id', null)->first();
         if ($query == null) {
             return response()->json(['success' => false, 'message' => 'Esse produto não esta no carrinho']);
         } else {
@@ -103,7 +110,7 @@ class ClientController extends Controller
             ['user_id', Auth::user()->id],
             ['product_id', $id]
         ];
-        return Bag::where($query)->delete();
+        return Cart::where($query)->delete();
     }
 
     public function BuyProduct(Request $request)
@@ -115,45 +122,56 @@ class ClientController extends Controller
             return "Erro: Endereço não informado!";
         }
 
-        //The $userBag variable will receive all the products with their data that are in the Bag table that have the same 'user_id' as the logged in user and the 'order_id' field with a null value.
+        //The $usercart variable will receive all the products with their data that are in the cart table that have the same 'user_id' as the logged in user and the 'order_id' field with a null value.
         $query = [
             ['user_id', Auth::user()->id],
             ['order_id', null]
         ];
-        $userBag = Bag::with("product")->where($query)->get();
+        $usercart = Cart::with("product")->where($query)->get();
 
-        if ($userBag->isEmpty()) {
+        if ($usercart->isEmpty()) {
             return "Erro: Não há itens pendentes no carrinho!";
         } else if ($request['price'] == 1) {
             //Here we define the value of the $totalProductPrice variable as 0, so that each time the BuyProduct function is used we can make a new addition, in order to obtain a new and correct price value corresponding only to the new products added.
             $totalProductPrice = 0;
 
-            //For each product inside the $userBag variable, an operation will be performed to request its price and add it to a total value.
-            foreach ($userBag as $bagItem) {
-                //$new Stock will receive the stock value of the referenced product minus the quantity of the product chosen by the client for his bag.
-                $NewStock = Product::where('id', $bagItem->product_id)->first()->stock - $bagItem->quantity;
+            //For each product inside the $usercart variable, an operation will be performed to request its price and add it to a total value.
+            foreach ($usercart as $cartItem) {
+                //$new Stock will receive the stock value of the referenced product minus the quantity of the product chosen by the client for his cart.
+                $NewStock = Product::where('id', $cartItem->product_id)->first()->stock - $cartItem->quantity;
 
                 //The product stock value will be changed to the new value
-                Product::where('id', $bagItem->product_id)->update(['stock' => $NewStock]);
+                Product::where('id', $cartItem->product_id)->update(['stock' => $NewStock]);
 
                 //Each time the command is executed, the value of multiplying the price by the quantity of the product purchased is added to the value of $totalProductPrice;
-                $totalProductPrice += $bagItem->product->price * $bagItem->quantity;
+                $totalProductPrice += $cartItem->product->price * $cartItem->quantity;
             }
+            $userOrder = Order::create(
+                [
+                    "user_id" => Auth::user()->id,
+                    "adress_id" => $adress['id'],
+                    "price" => $totalProductPrice,
+                    "status" => 2
+                ]
+            );
+            //This command will update the 'order_id' field with the $userOrder variable to specify which products in the cart have already been purchased by the client.
+            cart::where('user_id', Auth::user()->id)->where('order_id', null)->update(['order_id' => $userOrder['id']]);
         } else if ($request['price'] == 2) {
             //Here we define the value of the $totalProductPrice variable as 0, so that each time the BuyProduct function is used we can make a new addition, in order to obtain a new and correct price value corresponding only to the new products added.
             $totalProductPrice = 0;
 
-            //For each product inside the $userBag variable, an operation will be performed to request its price and add it to a total value.
-            foreach ($userBag as $bagItem) {
-                //$new Stock will receive the stock value of the referenced product minus the quantity of the product chosen by the client for his bag.
-                $NewStock = Product::where('id', $bagItem->product_id)->first()->stock - $bagItem->quantity;
+            //For each product inside the $usercart variable, an operation will be performed to request its price and add it to a total value.
+            foreach ($usercart as $cartItem) {
+                //$new Stock will receive the stock value of the referenced product minus the quantity of the product chosen by the client for his cart.
+                $NewStock = Product::where('id', $cartItem->product_id)->first()->stock - $cartItem->quantity;
 
                 //The product stock value will be changed to the new value
-                Product::where('id', $bagItem->product_id)->update(['stock' => $NewStock]);
+                Product::where('id', $cartItem->product_id)->update(['stock' => $NewStock]);
 
                 //Each time the command is executed, the value of multiplying the price by the quantity of the product purchased is added to the value of $totalProductPrice;
-                $totalProductPrice += $bagItem->product->promotion_price * $bagItem->quantity;
+                $totalProductPrice += $cartItem->product->promotion_price * $cartItem->quantity;
             }
+
             //In the Order table, a row will be created representing the client's order, with the fields: user id; user address id; and the total amount that the client will pay, that was calculated in foreach.
 
 
@@ -166,18 +184,36 @@ class ClientController extends Controller
                     "status" => 2
                 ]
             );
-            //This command will update the 'order_id' field with the $userOrder variable to specify which products in the bag have already been purchased by the client.
-            Bag::where('user_id', Auth::user()->id)->where('order_id', null)->update(['order_id' => $userOrder['id']]);
+            //This command will update the 'order_id' field with the $userOrder variable to specify which products in the cart have already been purchased by the client.
+            cart::where('user_id', Auth::user()->id)->where('order_id', null)->update(['order_id' => $userOrder['id']]);
         }
         //sending email confirmation:
         //index()
-        $order = Order::with('bag')->where('user_id', Auth::user()->id)->where('status', 2)->latest()->first();        
-        $url = url('/app/photos/'. $order->bag->product->photo);
+        $order = Order::with('cart')->where('user_id', Auth::user()->id)->where('status', 2)->latest()->first();
+        $count = count($order->cart);
+
+        $allProductsDescription = [];
+        for ($i = 0; $i < $count; $i++) {
+            $productDescription = $order->cart[$i]['product']['description'];
+            $allProductsDescription[] = ['Description' => $productDescription];
+        }
+
+        $url = url('/app/photos/' . $order->cart[0]['product']['photo']);
+        $quantity = 0;
+        for ($i = 0; $i < $count; $i++) {
+            $quantity += $order->cart[$i]['quantity'];
+        }
+
+        $productDescriptionString = '';
+        foreach ($allProductsDescription as $product) {
+            $productDescriptionString .= $product['Description'] . ', ';
+        }
+        $productDescriptionString = rtrim($productDescriptionString, ', '); // Remova a última vírgula e espaço
+
         $mailData = [
             'title' => 'A sua compra foi efetuada com sucesso.',
-            'body' => 'Confira abaixo seu pedido.',
-            'productName' => $order->bag->product->name,
-            'quantity' => $order->bag->quantity,
+            'body' => 'Confira abaixo seu pedido: ' . $productDescriptionString, // Adicione a variável aqui
+            'quantity' => $quantity,
             'price' => $totalProductPrice,
             'img' => $url
         ];
@@ -186,11 +222,11 @@ class ClientController extends Controller
 
         $message = [
             'Email' => 'Você receberá um email com a confirmação da compra',
-            'productName' => $order->bag->product->name,
-            'quantity' => $order->bag->quantity,
+            'quantity' => $quantity,
             'price' => $totalProductPrice,
             'img' => $url
         ];
+        $message['productDescription'] = $productDescriptionString; // Adicione a variável aqui
         return $message;
     }
 
@@ -202,19 +238,19 @@ class ClientController extends Controller
         $destinationZipCode = str_replace('-', '', $request['cep']);
 
         //Calc of weight
-        $bagWithProducts = Bag::with('product')
+        $cartWithProducts = Cart::with('product')
             ->where('user_id', Auth::user()->id)
             ->where('order_id', null)
             ->get();
         $totalWeight = 0;
-        for ($i = 0; $i < count($bagWithProducts); $i++) {
-            $totalWeight += $bagWithProducts[$i]['product']['weight'] * $bagWithProducts[$i]['quantity'];
+        for ($i = 0; $i < count($cartWithProducts); $i++) {
+            $totalWeight += $cartWithProducts[$i]['product']['weight'] * $cartWithProducts[$i]['quantity'];
         }
 
         //Calc of total Height
         $totalHeight = 0;
-        for ($i = 0; $i < count($bagWithProducts); $i++) {
-            $totalHeight += $bagWithProducts[$i]['product']['height'] * $bagWithProducts[$i]['quantity'];
+        for ($i = 0; $i < count($cartWithProducts); $i++) {
+            $totalHeight += $cartWithProducts[$i]['product']['height'] * $cartWithProducts[$i]['quantity'];
         }
         if ($totalHeight < 10) {
             $totalHeight = 10;
@@ -222,8 +258,8 @@ class ClientController extends Controller
 
         //Calc of greater width
         $widths = array();
-        for ($i = 0; $i < count($bagWithProducts); $i++) {
-            $width = $bagWithProducts[$i]['product']['width'];
+        for ($i = 0; $i < count($cartWithProducts); $i++) {
+            $width = $cartWithProducts[$i]['product']['width'];
             $widths[] = $width;
         }
         $greaterWidth = max($widths);
@@ -233,8 +269,8 @@ class ClientController extends Controller
 
         //calc of greater length
         $lengths = array();
-        for ($i = 0; $i < count($bagWithProducts); $i++) {
-            $length = $bagWithProducts[$i]['product']['lenght'];
+        for ($i = 0; $i < count($cartWithProducts); $i++) {
+            $length = $cartWithProducts[$i]['product']['lenght'];
             $lengths[] = $length;
         }
         $greaterLength = max($lengths);
@@ -300,8 +336,33 @@ class ClientController extends Controller
     }
     //-------------------------------------------------------------------------------------
 
+    public function UserOpenChat(Request $request)
+    {
+        $query = [
+            'user_id' => Auth::user()->id,
+            'admin_id' => $request['admin_id']
+        ];
+        $chat = Chat::where($query)->get();
+        if ($chat->isEmpty()) {
+            Chat::create(['user_id' => Auth::user()->id, 'admin_id' => $request['admin_id']]);
+            return Chat::with('Admin_id')->with('direct_message')->where($query)->first();
+        } else {
+            return Chat::with('admin_id')->with('direct_message')->where($query)->first();
+        }
+    }
 
+    public function UserSendMessage(Request $request)
+    {
+        Direct_message::create([
+            'message' => $request['message'],
+            'chat_id' => $request['chat_id'],
+            'sender' => false
+        ]);
+        return Chat::with('direct_message')->where('id', $request['chat_id'])->first();
+    }
 
-
-
+    public function ShowUserChats()
+    {
+        return Chat::with('admin_id')->with('last_direct_message')->where('user_id', Auth::user()->id)->get();
+    }
 }
